@@ -18,7 +18,7 @@ func main() {
 	flag.StringVar(&baseURL, "url", "https://issues.apache.org/jira", "base JIRA url")
 	flag.IntVar(&N, "n", 1, "concurrent fetches")
 	flag.StringVar(&outputFile, "output", "apache.json", "output file for database")
-	flag.BoolVar(&debug, "debug", false, "debug output")
+	flag.BoolVar(&debug, "debug", true, "debug output")
 	flag.Parse()
 
 	startTime := time.Now()
@@ -30,9 +30,10 @@ func main() {
 
 	// Print out some statistics
 	if debug {
-		fmt.Println(len(db.Issues))
-		fmt.Println(db.Tree)
-		fmt.Println(db.Graph)
+		fmt.Printf("%d issues, %d parent links, %d general links\n",
+			len(db.Issues),
+			len(db.Tree),
+			len(db.Graph))
 	}
 
 	// Output database
