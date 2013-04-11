@@ -2,15 +2,47 @@
 package main
 
 import (
+	"encoding/json"
+	"flag"
 	"fmt"
 	"issues/jira"
+	"os"
+	"time"
 )
 
 func main() {
-	t := jira.NewTracker("https://issues.apache.org/jira")
-	t.GetFrom(0)
-	t.PrintParams()
-	fmt.Println(len(t.DB.Issues))
-	fmt.Println(t.DB.Tree)
-	fmt.Println(t.DB.Graph)
+	var baseURL string
+	var debug bool
+	var N int
+	var outputFile string
+	flag.StringVar(&baseURL, "url", "https://issues.apache.org/jira", "base JIRA url")
+	flag.IntVar(&N, "n", 1, "concurrent fetches")
+	flag.StringVar(&outputFile, "output", "apache.json", "output file for database")
+	flag.BoolVar(&debug, "debug", false, "debug output")
+	flag.Parse()
+
+	startTime := time.Now()
+
+	// Get the database
+	t := jira.NewTracker(baseURL)
+	t.FetchAll(N)
+	db := t.GetAll()
+
+	// Print out some statistics
+	if debug {
+		fmt.Println(len(db.Issues))
+		fmt.Println(db.Tree)
+		fmt.Println(db.Graph)
+	}
+
+	// Output database
+	f, err := os.Create(outputFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not output json!")
+		os.Exit(1)
+	}
+	enc := json.NewEncoder(f)
+	enc.Encode(db)
+	f.Close()
+	fmt.Println("run took ", time.Since(startTime))
 }

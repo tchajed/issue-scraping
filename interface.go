@@ -33,6 +33,7 @@ type Id string
 type Issue struct {
 	Id
 	Title    string
+	Name     string // eg, "#53" for github and "YARN-499" for JIRA
 	Body     string
 	Comments []Comment
 }
@@ -66,8 +67,10 @@ func (c Comment) String() string {
 	)
 }
 
-// Database of discovered issues and dependency relationships among them. Safe
-// to access from multiple goroutines.
+// Database of discovered issues and dependency relationships among them.
+// Maintains a tree for issues organized in a DAG as well as a more general
+// undirected graph (in the form of an adjacency list). Safe to access from
+// multiple goroutines.
 type Database struct {
 	Issues map[Id]Issue
 	Tree   map[Id]Id   // map issues to their parents

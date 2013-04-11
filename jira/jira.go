@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-const InitialMaxResults int = 10000
+const InitialMaxResults int = 200
 
 // synchronized set of strings
 type stringSet struct {
@@ -32,7 +32,6 @@ type Tracker struct {
 	baseURL    string
 	total      int
 	maxResults int
-	start      int
 	DB         *issues.Database
 	issueLinks stringSet // set of issue links (by link id) scraped
 }
@@ -74,8 +73,13 @@ func (t *Tracker) AddIssueLink(from issues.Id, link map[string]interface{}) {
 	t.issueLinks.Add(id)
 }
 
-// Helper for working with JSON objects: type-asserts interface to JSON object
+// Helper for working with JSON objects: type-asserts interface to JSON object.
+// If provided map is nil, returns a new map (which can be safely indexed for
+// zero values).
 func getmap(v interface{}) map[string]interface{} {
+	if v == nil {
+		return make(map[string]interface{})
+	}
 	return v.(map[string]interface{})
 }
 
@@ -92,13 +96,46 @@ func getstring(m map[string]interface{}, key string) string {
 	return ""
 }
 
-func (t *Tracker) GetFrom(start int) {
+// Fetch all issues from JIRA with a concurrency of N parallel fetches.
+func (t *Tracker) FetchAll(N int) {
+	firstBatchEnd := t.GetFrom(0)
+	// check if the first search returned all the results
+	if firstBatchEnd >= t.total {
+		return
+	}
+	work := make(chan int)
+	done := make(chan bool)
+	for i := 0; i < N; i++ {
+		go func() {
+			for start := range work {
+				t.GetFrom(start)
+				t.PrintParams()
+			}
+			done <- true
+		}()
+	}
+	for start := firstBatchEnd; start < t.total/2; start += t.maxResults {
+		work <- start
+	}
+	close(work)
+	for i := 0; i < N; i++ {
+		<-done
+	}
+}
+
+func (t *Tracker) GetAll() *issues.Database {
+	return t.DB
+}
+
+// Get issues starting from a particular search result number. Returns the
+// number of the last result found.
+func (t *Tracker) GetFrom(start int) int {
 	db := t.DB
 	params := t.Search(start)
 	params["fields"] = "id,summary,description,comment,parent,issuelinks"
 	r, err := issues.GetJson(t.url("/search"), params)
 	if err != nil {
-		return
+		return start
 	}
 	if _, ok := r["maxResults"]; ok {
 		t.maxResults = int(r["maxResults"].(float64))
@@ -111,6 +148,7 @@ func (t *Tracker) GetFrom(start int) {
 		issueMap := getmap(issueInterface)
 		issue := issues.Issue{}
 		issue.Id = toId(issueMap["id"])
+		issue.Name = getstring(issueMap, "key")
 
 		// Base fields
 		fields := getmap(issueMap["fields"])
@@ -147,13 +185,13 @@ func (t *Tracker) GetFrom(start int) {
 			t.AddIssueLink(issue.Id, link)
 		}
 	}
-	t.start += len(issueList)
+	return start + len(issueList)
 }
 
 // For debugging purposes
 func (t *Tracker) PrintParams() {
-	fmt.Printf("start: %d total: %d maxResults: %d\n",
-		t.start,
+	fmt.Printf("finished: %d total: %d maxResults: %d\n",
+		len(t.DB.Issues),
 		t.total,
 		t.maxResults)
 }
