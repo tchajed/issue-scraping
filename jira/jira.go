@@ -4,6 +4,7 @@ package jira
 import (
 	"fmt"
 	"issues"
+	"jsonutil"
 	"sync"
 )
 
@@ -67,33 +68,10 @@ func (t *Tracker) AddIssueLink(from issues.Id, link map[string]interface{}) {
 		return
 	}
 	if _, ok := link["inwardIssue"]; ok {
-		other := getmap(link["inwardIssue"])
-		t.DB.AddRelation(from, toId(other["id"]))
+		other := jsonutil.GetMap(link["inwardIssue"])
+		t.DB.AddRelation(from, issues.ToId(other["id"]))
 	}
 	t.issueLinks.Add(id)
-}
-
-// Helper for working with JSON objects: type-asserts interface to JSON object.
-// If provided map is nil, returns a new map (which can be safely indexed for
-// zero values).
-func getmap(v interface{}) map[string]interface{} {
-	if v == nil {
-		return make(map[string]interface{})
-	}
-	return v.(map[string]interface{})
-}
-
-// Helper for working with JSON objects: type asserts interface to issues.Id
-func toId(v interface{}) issues.Id {
-	return issues.Id(v.(string))
-}
-
-// Safely get a string value from a map
-func getstring(m map[string]interface{}, key string) string {
-	if v, ok := m[key]; ok && v != nil {
-		return v.(string)
-	}
-	return ""
 }
 
 // Fetch all issues from JIRA with a concurrency of N parallel fetches.
@@ -130,27 +108,27 @@ func (t *Tracker) GetAll() *issues.Database {
 
 func parseComment(commentInterface interface{}) issues.Comment {
 	comment := issues.Comment{}
-	commentMap := getmap(commentInterface)
-	comment.Body = getstring(commentMap, "body")
-	author := getmap(commentMap["author"])
-	comment.AuthorName = getstring(author, "displayName")
-	comment.AuthorEmail = getstring(author, "emailAddress")
+	commentMap := jsonutil.GetMap(commentInterface)
+	comment.Body = jsonutil.GetString(commentMap, "body")
+	author := jsonutil.GetMap(commentMap["author"])
+	comment.AuthorName = jsonutil.GetString(author, "displayName")
+	comment.AuthorEmail = jsonutil.GetString(author, "emailAddress")
 	return comment
 }
 
 func parseIssue(issueInterface interface{}) issues.Issue {
-	issueMap := getmap(issueInterface)
+	issueMap := jsonutil.GetMap(issueInterface)
 	issue := issues.Issue{}
-	issue.Id = toId(issueMap["id"])
-	issue.Name = getstring(issueMap, "key")
+	issue.Id = issues.ToId(issueMap["id"])
+	issue.Name = jsonutil.GetString(issueMap, "key")
 
 	// Base fields
-	fields := getmap(issueMap["fields"])
-	issue.Title = getstring(fields, "summary")
-	issue.Body = getstring(fields, "description")
+	fields := jsonutil.GetMap(issueMap["fields"])
+	issue.Title = jsonutil.GetString(fields, "summary")
+	issue.Body = jsonutil.GetString(fields, "description")
 
 	// Comments
-	commentInfo := getmap(fields["comment"])
+	commentInfo := jsonutil.GetMap(fields["comment"])
 	issue.Comments = make([]issues.Comment, 0,
 		int(commentInfo["maxResults"].(float64)))
 	comments := commentInfo["comments"].([]interface{})
@@ -164,12 +142,11 @@ func parseIssue(issueInterface interface{}) issues.Issue {
 // Get issues starting from a particular search result number. Returns the
 // number of the last result found.
 func (t *Tracker) GetFrom(start int) int {
-	db := t.DB
 	params := t.Search(start)
 	// filter the list of fields -- only affects the fields map; in particular,
 	// id, key and self (a URL for the issue resource) are always returned
 	params["fields"] = "summary,description,comment,parent,issuelinks"
-	r, err := issues.GetJson(t.url("/search"), params)
+	r, err := jsonutil.Get(t.url("/search"), params)
 	if err != nil {
 		return start
 	}
@@ -179,24 +156,25 @@ func (t *Tracker) GetFrom(start int) int {
 	if t.total == 0 {
 		t.total = int(r["total"].(float64))
 	}
+	db := t.DB
 	issueList := r["issues"].([]interface{})
 	for _, issueInterface := range issueList {
 		issue := parseIssue(issueInterface)
 		db.AddIssue(issue)
 
 		// Links
-		issueMap := getmap(issueInterface)
-		fields := getmap(issueMap["fields"])
+		issueMap := jsonutil.GetMap(issueInterface)
+		fields := jsonutil.GetMap(issueMap["fields"])
 
 		// parent links
 		if _, ok := fields["parent"]; ok {
-			parentInfo := getmap(fields["parent"])
-			db.SetParent(issue.Id, toId(parentInfo["id"]))
+			parentInfo := jsonutil.GetMap(fields["parent"])
+			db.SetParent(issue.Id, issues.ToId(parentInfo["id"]))
 		}
 
 		// general links
 		for _, issueLinkInterface := range fields["issuelinks"].([]interface{}) {
-			link := getmap(issueLinkInterface)
+			link := jsonutil.GetMap(issueLinkInterface)
 			t.AddIssueLink(issue.Id, link)
 		}
 	}

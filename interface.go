@@ -2,10 +2,7 @@
 package issues
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"sync"
 )
 
@@ -13,25 +10,12 @@ type Tracker interface {
 	GetAll() *Database
 }
 
-// Fetch a URL resource with an interface tuned for REST applications: the
-// params are URL-encoded to be added to the baseURL and a decoded JSON value
-// is returned.
-func GetJson(baseURL string,
-	params map[string]string) (v map[string]interface{}, err error) {
-	p := url.Values{}
-	for key, val := range params {
-		p.Add(key, val)
-	}
-	resp, err := http.Get(baseURL + "?" + p.Encode())
-	if err != nil {
-		return
-	}
-	dec := json.NewDecoder(resp.Body)
-	err = dec.Decode(&v)
-	return
-}
-
 type Id string
+
+// Helper for working with JSON objects: type asserts interface to Id
+func ToId(v interface{}) Id {
+	return Id(v.(string))
+}
 
 type Issue struct {
 	Id
