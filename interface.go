@@ -13,6 +13,9 @@ type Tracker interface {
 	GetAll() *Database
 }
 
+// Fetch a URL resource with an interface tuned for REST applications: the
+// params are URL-encoded to be added to the baseURL and a decoded JSON value
+// is returned.
 func GetJson(baseURL string,
 	params map[string]string) (v map[string]interface{}, err error) {
 	p := url.Values{}
@@ -38,6 +41,8 @@ type Issue struct {
 	Comments []Comment
 }
 
+// internal function to shorten string representation of potentially large
+// issues/comments
 func trim(s string, length int) string {
 	if len(s) > length {
 		return s[:length-3] + "..."
@@ -93,12 +98,15 @@ func (db *Database) AddIssue(iss Issue) {
 	db.Issues[iss.Id] = iss
 }
 
+// Add an edge to the tree part of the database
 func (db *Database) SetParent(iss, parent Id) {
 	db.m.Lock()
 	defer db.m.Unlock()
 	db.Tree[iss] = parent
 }
 
+// Add a bidirectional relationship to the general undirected graph of the
+// database. Self-loops are allowed, but uniqueness of the edge is not checked.
 func (db *Database) AddRelation(a, b Id) {
 	db.m.Lock()
 	defer db.m.Unlock()

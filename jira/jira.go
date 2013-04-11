@@ -114,7 +114,7 @@ func (t *Tracker) FetchAll(N int) {
 			done <- true
 		}()
 	}
-	for start := firstBatchEnd; start < t.total/2; start += t.maxResults {
+	for start := firstBatchEnd; start < t.total; start += t.maxResults {
 		work <- start
 	}
 	close(work)
@@ -123,8 +123,42 @@ func (t *Tracker) FetchAll(N int) {
 	}
 }
 
+// Get the database fetched so far.
 func (t *Tracker) GetAll() *issues.Database {
 	return t.DB
+}
+
+func parseComment(commentInterface interface{}) issues.Comment {
+	comment := issues.Comment{}
+	commentMap := getmap(commentInterface)
+	comment.Body = getstring(commentMap, "body")
+	author := getmap(commentMap["author"])
+	comment.AuthorName = getstring(author, "displayName")
+	comment.AuthorEmail = getstring(author, "emailAddress")
+	return comment
+}
+
+func parseIssue(issueInterface interface{}) issues.Issue {
+	issueMap := getmap(issueInterface)
+	issue := issues.Issue{}
+	issue.Id = toId(issueMap["id"])
+	issue.Name = getstring(issueMap, "key")
+
+	// Base fields
+	fields := getmap(issueMap["fields"])
+	issue.Title = getstring(fields, "summary")
+	issue.Body = getstring(fields, "description")
+
+	// Comments
+	commentInfo := getmap(fields["comment"])
+	issue.Comments = make([]issues.Comment, 0,
+		int(commentInfo["maxResults"].(float64)))
+	comments := commentInfo["comments"].([]interface{})
+	for _, commentInterface := range comments {
+		comment := parseComment(commentInterface)
+		issue.Comments = append(issue.Comments, comment)
+	}
+	return issue
 }
 
 // Get issues starting from a particular search result number. Returns the
@@ -132,7 +166,9 @@ func (t *Tracker) GetAll() *issues.Database {
 func (t *Tracker) GetFrom(start int) int {
 	db := t.DB
 	params := t.Search(start)
-	params["fields"] = "id,summary,description,comment,parent,issuelinks"
+	// filter the list of fields -- only affects the fields map; in particular,
+	// id, key and self (a URL for the issue resource) are always returned
+	params["fields"] = "summary,description,comment,parent,issuelinks"
 	r, err := issues.GetJson(t.url("/search"), params)
 	if err != nil {
 		return start
@@ -145,34 +181,13 @@ func (t *Tracker) GetFrom(start int) int {
 	}
 	issueList := r["issues"].([]interface{})
 	for _, issueInterface := range issueList {
-		issueMap := getmap(issueInterface)
-		issue := issues.Issue{}
-		issue.Id = toId(issueMap["id"])
-		issue.Name = getstring(issueMap, "key")
-
-		// Base fields
-		fields := getmap(issueMap["fields"])
-		issue.Title = getstring(fields, "summary")
-		issue.Body = getstring(fields, "description")
-
-		// Comments
-		commentInfo := getmap(fields["comment"])
-		issue.Comments = make([]issues.Comment, 0,
-			int(commentInfo["maxResults"].(float64)))
-		comments := commentInfo["comments"].([]interface{})
-		for _, commentInterface := range comments {
-			comment := issues.Comment{}
-			commentMap := getmap(commentInterface)
-			comment.Body = getstring(commentMap, "body")
-			author := getmap(commentMap["author"])
-			comment.AuthorName = getstring(author, "displayName")
-			comment.AuthorEmail = getstring(author, "emailAddress")
-			issue.Comments = append(issue.Comments, comment)
-		}
-
+		issue := parseIssue(issueInterface)
 		db.AddIssue(issue)
 
 		// Links
+		issueMap := getmap(issueInterface)
+		fields := getmap(issueMap["fields"])
+
 		// parent links
 		if _, ok := fields["parent"]; ok {
 			parentInfo := getmap(fields["parent"])
