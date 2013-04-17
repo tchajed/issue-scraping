@@ -6,6 +6,7 @@ import (
 	"issues"
 	"jsonutil"
 	"sync"
+	"time"
 )
 
 const InitialMaxResults int = 200
@@ -41,6 +42,15 @@ func (t *Tracker) url(path string) string {
 	return t.baseURL + "/rest/api/latest" + path
 }
 
+// The JSON date format used by the JIRA API
+const DateFormat = "2006-01-02T15:04:05.000-0700"
+
+func getDate(m map[string]interface{}, fieldname string) time.Time {
+	// ignore parse errors (returning UNIX time 0 is sufficient)
+	t, _ := time.Parse(DateFormat, jsonutil.GetString(m, fieldname))
+	return t
+}
+
 func (t *Tracker) Search(start int) (params map[string]string) {
 	params = make(map[string]string)
 	params["jql"] = "ORDER BY Created Asc"
@@ -73,9 +83,9 @@ func (t *Tracker) AddIssueLink(from issues.Id, link map[string]interface{}) {
 		other := jsonutil.GetMap(link["inwardIssue"])
 		t.DB.AddLink(
 			issues.Link{
-				Type: linkType,
 				From: from,
 				To:   issues.ToId(other["id"]),
+				Type: linkType,
 			},
 		)
 	}
@@ -100,7 +110,7 @@ func (t *Tracker) FetchAll(N int) {
 			done <- true
 		}()
 	}
-	for start := firstBatchEnd; start < t.total/4; start += t.maxResults {
+	for start := firstBatchEnd; start < t.total; start += t.maxResults {
 		work <- start
 	}
 	close(work)
@@ -117,6 +127,7 @@ func (t *Tracker) GetAll() *issues.Database {
 func parseComment(commentInterface interface{}) issues.Comment {
 	comment := issues.Comment{}
 	commentMap := jsonutil.GetMap(commentInterface)
+	comment.Created = getDate(commentMap, "created")
 	comment.Body = jsonutil.GetString(commentMap, "body")
 	author := jsonutil.GetMap(commentMap["author"])
 	comment.AuthorName = jsonutil.GetString(author, "displayName")
@@ -132,6 +143,7 @@ func parseIssue(issueInterface interface{}) issues.Issue {
 
 	// Base fields
 	fields := jsonutil.GetMap(issueMap["fields"])
+	issue.Created = getDate(fields, "created")
 	issue.Title = jsonutil.GetString(fields, "summary")
 	issue.Body = jsonutil.GetString(fields, "description")
 
@@ -153,7 +165,8 @@ func (t *Tracker) GetFrom(start int) int {
 	params := t.Search(start)
 	// filter the list of fields -- only affects the fields map; in particular,
 	// id, key and self (a URL for the issue resource) are always returned
-	params["fields"] = "summary,description,comment,parent,issuelinks"
+	params["fields"] =
+		"summary,description,comment,parent,issuelinks,created"
 	r, err := jsonutil.Get(t.url("/search"), params)
 	if err != nil {
 		return start

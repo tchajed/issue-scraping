@@ -4,6 +4,7 @@ package issues
 import (
 	"fmt"
 	"sync"
+	"time"
 )
 
 type Tracker interface {
@@ -13,9 +14,9 @@ type Tracker interface {
 type Id string
 
 type Link struct {
-	Type string
 	From Id
 	To   Id
+	Type string
 }
 
 // Helper for working with JSON objects: type asserts interface to Id
@@ -26,6 +27,7 @@ func ToId(v interface{}) Id {
 type Issue struct {
 	Id
 	Title    string
+	Created  time.Time
 	Name     string // eg, "#53" for github and "YARN-499" for JIRA
 	Body     string
 	Comments []Comment
@@ -51,6 +53,7 @@ func (iss Issue) String() string {
 type Comment struct {
 	AuthorName  string
 	AuthorEmail string
+	Created     time.Time
 	Body        string
 }
 
