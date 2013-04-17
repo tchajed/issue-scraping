@@ -12,6 +12,12 @@ type Tracker interface {
 
 type Id string
 
+type Link struct {
+	Type string
+	From Id
+	To   Id
+}
+
 // Helper for working with JSON objects: type asserts interface to Id
 func ToId(v interface{}) Id {
 	return Id(v.(string))
@@ -62,8 +68,8 @@ func (c Comment) String() string {
 // multiple goroutines.
 type Database struct {
 	Issues map[Id]Issue
-	Tree   map[Id]Id   // map issues to their parents
-	Graph  map[Id][]Id // undirected graph of relationships among issues
+	Tree   map[Id]Id     // map issues to their parents
+	Graph  map[Id][]Link // directed graph of links among issues
 	m      *sync.Mutex
 }
 
@@ -71,7 +77,7 @@ func NewDatabase() *Database {
 	return &Database{
 		Issues: make(map[Id]Issue),
 		Tree:   make(map[Id]Id),
-		Graph:  make(map[Id][]Id),
+		Graph:  make(map[Id][]Link),
 		m:      &sync.Mutex{},
 	}
 }
@@ -89,13 +95,11 @@ func (db *Database) SetParent(iss, parent Id) {
 	db.Tree[iss] = parent
 }
 
-// Add a bidirectional relationship to the general undirected graph of the
-// database. Self-loops are allowed, but uniqueness of the edge is not checked.
-func (db *Database) AddRelation(a, b Id) {
+// Add a directed relationship to the general directed graph of the
+// database. Self-loops are allowed, but uniqueness of the edge is not
+// checked.
+func (db *Database) AddLink(l Link) {
 	db.m.Lock()
 	defer db.m.Unlock()
-	db.Graph[a] = append(db.Graph[a], b)
-	if a != b {
-		db.Graph[b] = append(db.Graph[b], a)
-	}
+	db.Graph[l.From] = append(db.Graph[l.From], l)
 }

@@ -62,14 +62,22 @@ func NewTracker(url string) (t *Tracker) {
 }
 
 func (t *Tracker) AddIssueLink(from issues.Id, link map[string]interface{}) {
-	id := link["id"].(string)
+	id := jsonutil.GetString(link, "id")
 	// if already processed, ignore
 	if t.issueLinks.Contains(id) {
 		return
 	}
 	if _, ok := link["inwardIssue"]; ok {
+		typeInfo := jsonutil.GetMap(link["type"])
+		linkType := jsonutil.GetString(typeInfo, "inward")
 		other := jsonutil.GetMap(link["inwardIssue"])
-		t.DB.AddRelation(from, issues.ToId(other["id"]))
+		t.DB.AddLink(
+			issues.Link{
+				Type: linkType,
+				From: from,
+				To:   issues.ToId(other["id"]),
+			},
+		)
 	}
 	t.issueLinks.Add(id)
 }
@@ -92,7 +100,7 @@ func (t *Tracker) FetchAll(N int) {
 			done <- true
 		}()
 	}
-	for start := firstBatchEnd; start < t.total; start += t.maxResults {
+	for start := firstBatchEnd; start < t.total/4; start += t.maxResults {
 		work <- start
 	}
 	close(work)
