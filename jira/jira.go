@@ -17,6 +17,13 @@ type stringSet struct {
 	m   *sync.RWMutex
 }
 
+func newStringSet() stringSet {
+	return stringSet{
+		Set: make(map[string]bool),
+		m:   &sync.RWMutex{},
+	}
+}
+
 func (s stringSet) Contains(str string) bool {
 	s.m.RLock()
 	defer s.m.RUnlock()
@@ -64,9 +71,7 @@ func NewTracker(url string) (t *Tracker) {
 		baseURL:    url,
 		maxResults: InitialMaxResults,
 		DB:         issues.NewDatabase(),
-		issueLinks: stringSet{
-			Set: make(map[string]bool),
-			m:   &sync.RWMutex{}},
+		issueLinks: newStringSet(),
 	}
 	return
 }
@@ -167,6 +172,7 @@ func (t *Tracker) GetFrom(start int) int {
 	// id, key and self (a URL for the issue resource) are always returned
 	params["fields"] =
 		"summary,description,comment,parent,issuelinks,created"
+	params["expand"] = "changelog"
 	r, err := jsonutil.Get(t.url("/search"), params)
 	if err != nil {
 		return start
