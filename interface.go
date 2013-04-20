@@ -14,9 +14,10 @@ type Tracker interface {
 type Id string
 
 type Link struct {
-	From Id
-	To   Id
-	Type string
+	From    Id
+	To      Id
+	Type    string
+	Created time.Time
 }
 
 // Helper for working with JSON objects: type asserts interface to Id

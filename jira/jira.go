@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const InitialMaxResults int = 200
+const InitialMaxResults int = 100
 
 // synchronized set of strings
 type stringSet struct {
@@ -17,8 +17,8 @@ type stringSet struct {
 	m   *sync.RWMutex
 }
 
-func newStringSet() stringSet {
-	return stringSet{
+func newStringSet() *stringSet {
+	return &stringSet{
 		Set: make(map[string]bool),
 		m:   &sync.RWMutex{},
 	}
@@ -36,13 +36,54 @@ func (s stringSet) Add(str string) {
 	s.Set[str] = true
 }
 
+type createdDatesSet struct {
+	dates map[issues.Id]map[string]time.Time
+	m     *sync.Mutex
+}
+
+func newCreatedDatesSet() *createdDatesSet {
+	return &createdDatesSet{
+		dates: make(map[issues.Id]map[string]time.Time),
+		m:     &sync.Mutex{},
+	}
+}
+
+func (cd *createdDatesSet) addDate(from issues.Id, toKey string, date time.Time) {
+	cd.m.Lock()
+	defer cd.m.Unlock()
+	dates, ok := cd.dates[from]
+	if !ok {
+		dates = make(map[string]time.Time)
+		cd.dates[from] = dates
+	}
+	// check if new date is after existing date
+	if prevDate, ok := dates[toKey]; ok {
+		if date.After(prevDate) {
+			return
+		}
+	}
+	dates[toKey] = date
+}
+
 // Represents a JIRA issue tracking instance
 type Tracker struct {
-	baseURL    string
-	total      int
-	maxResults int
-	DB         *issues.Database
-	issueLinks stringSet // set of issue links (by link id) scraped
+	baseURL         string
+	total           int
+	maxResults      int
+	DB              *issues.Database
+	issueLinks      *stringSet // set of issue links (by link id) scraped
+	createdDatesSet *createdDatesSet
+}
+
+func NewTracker(url string) (t *Tracker) {
+	t = &Tracker{
+		baseURL:         url,
+		maxResults:      InitialMaxResults,
+		DB:              issues.NewDatabase(),
+		issueLinks:      newStringSet(),
+		createdDatesSet: newCreatedDatesSet(),
+	}
+	return
 }
 
 func (t *Tracker) url(path string) string {
@@ -59,21 +100,13 @@ func getDate(m map[string]interface{}, fieldname string) time.Time {
 }
 
 func (t *Tracker) Search(start int) (params map[string]string) {
-	params = make(map[string]string)
+	// provide a capacity hint to avoid excessive reallocs; a new map is
+	// used to make searches safe for multiple goroutines
+	params = make(map[string]string, 5)
 	params["jql"] = "ORDER BY Created Asc"
 	params["startAt"] = fmt.Sprintf("%d", start)
 	params["maxResults"] = fmt.Sprintf("%d", t.maxResults)
 	return params
-}
-
-func NewTracker(url string) (t *Tracker) {
-	t = &Tracker{
-		baseURL:    url,
-		maxResults: InitialMaxResults,
-		DB:         issues.NewDatabase(),
-		issueLinks: newStringSet(),
-	}
-	return
 }
 
 func (t *Tracker) AddIssueLink(from issues.Id, link map[string]interface{}) {
@@ -100,6 +133,7 @@ func (t *Tracker) AddIssueLink(from issues.Id, link map[string]interface{}) {
 // Fetch all issues from JIRA with a concurrency of N parallel fetches.
 func (t *Tracker) FetchAll(N int) {
 	firstBatchEnd := t.GetFrom(0)
+	//t.total /= 16
 	// check if the first search returned all the results
 	if firstBatchEnd >= t.total {
 		return
@@ -122,6 +156,7 @@ func (t *Tracker) FetchAll(N int) {
 	for i := 0; i < N; i++ {
 		<-done
 	}
+	t.addCreatedDates()
 }
 
 // Get the database fetched so far.
@@ -164,6 +199,52 @@ func parseIssue(issueInterface interface{}) issues.Issue {
 	return issue
 }
 
+func (t *Tracker) parseChangelog(from issues.Id, changelogInterface interface{}) {
+	changelog := jsonutil.GetMap(changelogInterface)
+	histories := changelog["histories"].([]interface{})
+	// connects link to keys to created dates (all links have a fixed from id)
+	createdDates := t.createdDatesSet
+	for _, historyInterface := range histories {
+		history := jsonutil.GetMap(historyInterface)
+		items := history["items"].([]interface{})
+		for _, itemInterface := range items {
+			item := jsonutil.GetMap(itemInterface)
+			// skip history items that don't concern links
+			if jsonutil.GetString(item, "field") != "Link" {
+				continue
+			}
+			created := getDate(history, "created")
+			if item["to"] == nil {
+				continue
+			}
+			toKey := jsonutil.GetString(item, "to")
+			createdDates.addDate(from, toKey, created)
+		}
+	}
+}
+
+func (t *Tracker) addCreatedDates() {
+	keyLookup := make(map[issues.Id]string, len(t.DB.Graph))
+	for _, links := range t.DB.Graph {
+		for _, link := range links {
+			if iss, ok := t.DB.Issues[link.To]; ok {
+				keyLookup[iss.Id] = iss.Name
+			}
+		}
+	}
+	t.createdDatesSet.m.Lock()
+	defer t.createdDatesSet.m.Unlock()
+	for fromId, toDates := range t.createdDatesSet.dates {
+		for i, link := range t.DB.Graph[fromId] {
+			if date, ok := toDates[keyLookup[link.To]]; ok {
+				link.Created = date
+				t.DB.Graph[fromId][i] = link
+			}
+		}
+		delete(t.createdDatesSet.dates, fromId)
+	}
+}
+
 // Get issues starting from a particular search result number. Returns the
 // number of the last result found.
 func (t *Tracker) GetFrom(start int) int {
@@ -204,6 +285,9 @@ func (t *Tracker) GetFrom(start int) int {
 			link := jsonutil.GetMap(issueLinkInterface)
 			t.AddIssueLink(issue.Id, link)
 		}
+
+		// history (for link creation dates)
+		t.parseChangelog(issue.Id, issueMap["changelog"])
 	}
 	return start + len(issueList)
 }
