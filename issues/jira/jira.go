@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const InitialMaxResults int = 100
+const InitialMaxResults int = 250
 
 // synchronized set of strings
 type stringSet struct {
