@@ -39,7 +39,7 @@ func main() {
 	// Output database
 	f, err := os.Create(outputFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "could not output json!")
+		fmt.Fprintln(os.Stderr, "could not output json: ", err)
 		os.Exit(1)
 	}
 	enc := json.NewEncoder(f)

@@ -132,9 +132,12 @@ func (t *Tracker) AddIssueLink(from issues.Id, link map[string]interface{}) {
 
 // Fetch all issues from JIRA with a concurrency of N parallel fetches.
 func (t *Tracker) FetchAll(N int) {
-	firstBatchEnd := t.GetFrom(0)
-	//t.total /= 16
+	err := t.GetFrom(0)
+	if err != nil {
+		fmt.Println("initial fetch failed", err)
+	}
 	// check if the first search returned all the results
+	firstBatchEnd := len(t.DB.Issues)
 	if firstBatchEnd >= t.total {
 		return
 	}
@@ -143,7 +146,10 @@ func (t *Tracker) FetchAll(N int) {
 	for i := 0; i < N; i++ {
 		go func() {
 			for start := range work {
-				t.GetFrom(start)
+				err = t.GetFrom(start)
+				if err != nil {
+					fmt.Printf("fetch from %d failed: %v\n", start, err)
+				}
 				t.PrintParams()
 			}
 			done <- true
@@ -245,9 +251,8 @@ func (t *Tracker) addCreatedDates() {
 	}
 }
 
-// Get issues starting from a particular search result number. Returns the
-// number of the last result found.
-func (t *Tracker) GetFrom(start int) int {
+// Get issues starting from a particular search result number.
+func (t *Tracker) GetFrom(start int) (err error) {
 	params := t.Search(start)
 	// filter the list of fields -- only affects the fields map; in particular,
 	// id, key and self (a URL for the issue resource) are always returned
@@ -256,7 +261,7 @@ func (t *Tracker) GetFrom(start int) int {
 	params["expand"] = "changelog"
 	r, err := jsonutil.Get(t.url("/search"), params)
 	if err != nil {
-		return start
+		return
 	}
 	if _, ok := r["maxResults"]; ok {
 		t.maxResults = int(r["maxResults"].(float64))
@@ -289,7 +294,7 @@ func (t *Tracker) GetFrom(start int) int {
 		// history (for link creation dates)
 		t.parseChangelog(issue.Id, issueMap["changelog"])
 	}
-	return start + len(issueList)
+	return
 }
 
 // For debugging purposes
